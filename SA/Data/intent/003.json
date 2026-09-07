@@ -1,0 +1,15 @@
+{
+    "intents": [
+        {
+            "tag": "negative",
+            "patterns": [
+                "gkgukj"
+            ],
+            "responses": [
+                " This is negative"
+            ],
+            "context": [],
+            "weight": 2
+        }
+    ]
+}
