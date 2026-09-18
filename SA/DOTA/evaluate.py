@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-BERT Evaluator: Tính toán các chỉ số Accuracy, Precision, Recall, F1-score.
+BERT Evaluator (Multi-task): Tính toán các chỉ số Accuracy, Precision, Recall, F1-score cho Sắc thái và Cảm xúc.
 """
 
 import json
 import torch
 import numpy as np
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer
 from torch.utils.data import DataLoader, TensorDataset, SequentialSampler
 from sklearn.model_selection import train_test_split
 
@@ -17,13 +17,15 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import (
-    BERT_DATA_JSON, BERT_MODEL_DIR, MAX_LENGTH, BATCH_SIZE, 
-    TRAIN_SPLIT, LABEL_MAP, REVERSE_LABEL_MAP, NUM_LABELS
+    BERT_DATA_JSON, BERT_MODEL_DIR, BERT_MODEL_NAME, MAX_LENGTH, BATCH_SIZE, 
+    TRAIN_SPLIT, SENTIMENT_MAP, REVERSE_SENTIMENT_MAP, NUM_SENTIMENT,
+    EMOTION_MAP, REVERSE_EMOTION_MAP, NUM_EMOTION
 )
+from train_bert import MultiTaskBertModel
 
 def evaluate():
     print("=" * 60)
-    print("BERT MODEL EVALUATION")
+    print("BERT MODEL EVALUATION (MULTI-TASK)")
     print("=" * 60)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -35,16 +37,18 @@ def evaluate():
         raw = json.load(f)
     
     sentences = [item['sentence'] for item in raw['data']]
-    labels = [LABEL_MAP[item['label']] for item in raw['data']]
+    sentiments = [SENTIMENT_MAP[item['sentiment']] for item in raw['data']]
+    emotions = [EMOTION_MAP[item['emotion']] for item in raw['data']]
 
-    # Chia dữ liệu giống lúc train để lấy đúng tập validation (20%)
-    indices = list(range(len(labels)))
+    indices = list(range(len(sentences)))
     _, val_idx = train_test_split(
-        indices, train_size=TRAIN_SPLIT, random_state=42, stratify=labels
+        indices, train_size=TRAIN_SPLIT, random_state=42
     )
     
     val_sentences = [sentences[i] for i in val_idx]
-    val_labels = [labels[i] for i in val_idx]
+    val_sentiments = [sentiments[i] for i in val_idx]
+    val_emotions = [emotions[i] for i in val_idx]
+    
     print(f"  Test set size: {len(val_sentences)} sentences")
 
     # 2. Tokenize
@@ -61,50 +65,55 @@ def evaluate():
     test_dataset = TensorDataset(
         encodings['input_ids'],
         encodings['attention_mask'],
-        torch.tensor(val_labels)
+        torch.tensor(val_sentiments),
+        torch.tensor(val_emotions)
     )
     test_loader = DataLoader(test_dataset, sampler=SequentialSampler(test_dataset), batch_size=BATCH_SIZE)
 
     # 3. Load Model
-    print("\n[3/4] Loading trained model...")
-    model = AutoModelForSequenceClassification.from_pretrained(BERT_MODEL_DIR)
+    print("\n[3/4] Loading trained multi-task model...")
+    model = MultiTaskBertModel(BERT_MODEL_NAME, NUM_SENTIMENT, NUM_EMOTION)
+    model.load_state_dict(torch.load(os.path.join(BERT_MODEL_DIR, 'pytorch_model.bin'), map_location=device, weights_only=True))
     model.to(device)
     model.eval()
 
     # 4. Predict
     print("\n[4/4] Running predictions...")
-    all_preds = []
-    all_true = []
+    all_preds_sent, all_preds_emo = [], []
+    all_true_sent, all_true_emo = [], []
 
     with torch.no_grad():
         for batch in test_loader:
-            input_ids, attention_mask, labels = [b.to(device) for b in batch]
-            outputs = model(input_ids, attention_mask=attention_mask)
+            input_ids, attention_mask, labels_sent, labels_emo = [b.to(device) for b in batch]
+            logits_sent, logits_emo = model(input_ids, attention_mask=attention_mask)
             
-            preds = torch.argmax(outputs.logits, dim=1)
-            all_preds.extend(preds.cpu().numpy())
-            all_true.extend(labels.cpu().numpy())
+            preds_sent = torch.argmax(logits_sent, dim=1)
+            preds_emo = torch.argmax(logits_emo, dim=1)
+            
+            all_preds_sent.extend(preds_sent.cpu().numpy())
+            all_preds_emo.extend(preds_emo.cpu().numpy())
+            all_true_sent.extend(labels_sent.cpu().numpy())
+            all_true_emo.extend(labels_emo.cpu().numpy())
 
-    # Calculate Metrics
-    acc = accuracy_score(all_true, all_preds)
-    target_names = [REVERSE_LABEL_MAP[i] for i in range(NUM_LABELS)]
-    report = classification_report(all_true, all_preds, target_names=target_names)
-
+    # Calculate Metrics for Sentiment
     print("\n" + "=" * 60)
-    print("CALCULATION RESULTS")
+    print("SENTIMENT EVALUATION")
     print("=" * 60)
-    print(f"Overall Accuracy: {acc*100:.2f}%")
+    acc_sent = accuracy_score(all_true_sent, all_preds_sent)
+    target_names_sent = [REVERSE_SENTIMENT_MAP[i] for i in range(NUM_SENTIMENT)]
+    print(f"Overall Sentiment Accuracy: {acc_sent*100:.2f}%")
     print("\nDetailed Report:")
-    print(report)
-    
-    # Confusion Matrix (optional but helpful)
-    cm = confusion_matrix(all_true, all_preds)
-    print("Confusion Matrix:")
-    header = "      " + "".join([f"{name:>12}" for name in target_names])
-    print(header)
-    for i, row in enumerate(cm):
-        row_str = f"{target_names[i]:>12} " + "".join([f"{val:>12}" for val in row])
-        print(row_str)
+    print(classification_report(all_true_sent, all_preds_sent, target_names=target_names_sent))
+
+    # Calculate Metrics for Emotion
+    print("\n" + "=" * 60)
+    print("EMOTION EVALUATION")
+    print("=" * 60)
+    acc_emo = accuracy_score(all_true_emo, all_preds_emo)
+    target_names_emo = [REVERSE_EMOTION_MAP[i] for i in range(NUM_EMOTION)]
+    print(f"Overall Emotion Accuracy: {acc_emo*100:.2f}%")
+    print("\nDetailed Report:")
+    print(classification_report(all_true_emo, all_preds_emo, target_names=target_names_emo))
     print("=" * 60)
 
 if __name__ == "__main__":

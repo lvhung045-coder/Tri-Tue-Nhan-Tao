@@ -12,8 +12,11 @@ sys.path.append(os.path.join(BASE_DIR, 'DOTA'))
 
 # Chỉ sử dụng BERT
 from DOTA.predict_bert import BertPredictor
-from RunProgram import but_scan # Vẫn giữ but_scan để làm sạch văn bản
-
+def but_scan(sentence):
+    """Giữ lại phần sau chữ 'but' (logic cũ từ RunProgram)"""
+    if 'but' in sentence.lower():
+        return sentence.lower().split("but", 1)[1].strip()
+    return sentence
 try:
     bert_predictor = BertPredictor()
     HAS_BERT = True
@@ -30,6 +33,8 @@ def sendText():
         res = "Please try sending again ! Thank you !"
     elif per_msg.lower() == "hello":
         res = "Hello there! I am powered by BERT."
+    elif not any(c.isalpha() for c in per_msg) or len(per_msg) < 2:
+        res = "Xin lỗi, tôi chỉ hiểu văn bản chữ, vui lòng không nhập ký tự lạ hoặc câu quá ngắn!"
     else:
         # Làm sạch câu (loại bỏ ký tự đặc biệt, chuyển lowercase)
         clean_msg = but_scan(per_msg)
@@ -40,7 +45,7 @@ def sendText():
         else:
             res = "Mô hình BERT chưa được tải. Vui lòng kiểm tra lại!"
         
-    CSU_color = "#FF3300"
+    CSU_color = "#0066CC" # Đổi từ đỏ sang xanh dương cho dịu mắt
     box_rel.insert(END, " You: " + per_msg + "\n", "You_chat")
     box_rel.insert(END, " Our Bot (BERT): ")
     box_rel.insert(END, res + "\n\n", "CSU_chat")
@@ -74,7 +79,7 @@ name_sys.config(font=("Bookman Old Style", 25, "bold"))
 name_sys.place(y=10, x=200)
 
 # Label trạng thái mô hình
-status_label = Label(chatbot, text="Engine: BERT Intelligence v1.0", fg="#008000", bg="#DFFFFF", font=("Arial", 9, "italic"))
+status_label = Label(chatbot, text="Engine: BERT Multi-Task Intelligence v2.0", fg="#008000", bg="#DFFFFF", font=("Arial", 9, "italic"))
 status_label.place(y=50, x=175)
 
 # Box message
